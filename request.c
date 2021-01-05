@@ -498,6 +498,22 @@ static int parse_header(ci_request_t * req)
     if ((request_status = parse_request(req, h->headers[0])) != EC_100)
         return request_status;
 
+    const char *sim_delay = ci_headers_value(req->request_header, "Symphony-ICAP-Simulator-Response-Delay-Seconds");
+    if (sim_delay) {
+        int delay = strtol(sim_delay, NULL, 10);
+        ci_debug_printf(5, "simulated delay is %d. start sleeping...\n", delay);
+        sleep(delay);
+        ci_debug_printf(5, "simulated delay is %d. sleeping is done\n", delay);
+    }
+
+    const char *sim_response = ci_headers_value(req->request_header, "Symphony-ICAP-Simulator-Response-Code");
+    if (sim_response) {
+        req->simulator = 1;
+        int code = strtol(sim_response, NULL, 10);
+        ci_debug_printf(5, "simulated response was %d\n", code);
+        return code;
+    }
+
     for (i = 1; i < h->used && request_status == EC_100; i++) {
         if (strncasecmp("Preview:", h->headers[i], 8) == 0) {
             val = h->headers[i] + 8;
@@ -638,8 +654,11 @@ static int ec_responce(ci_request_t * req, int ec)
         allow204to200OK = 1;
         ec = EC_200;
     }
-    snprintf(buf, 256, "ICAP/1.0 %d %s",
-             ci_error_code(ec), ci_error_code_string(ec));
+    if (req->simulator) {
+        snprintf(buf, 256, "ICAP/1.0 %d SIMULATED", ec);
+    } else {
+        snprintf(buf, 256, "ICAP/1.0 %d %s",ci_error_code(ec), ci_error_code_string(ec));
+    }
     ci_headers_add(req->response_header, buf);
     ci_headers_add(req->response_header, "Server: C-ICAP/" VERSION);
     if (req->keepalive)
@@ -1531,6 +1550,12 @@ static int do_request(ci_request_t * req)
     int res, preview_status = 0, auth_status;
     int ret_status = CI_OK; /*By default ret_status is CI_OK, on error must set to CI_ERROR*/
     res = parse_header(req);
+    if (req->simulator) {
+        req->return_code = res;
+        req->keepalive = 0;
+        ec_responce(req, res);
+        return CI_ERROR;
+    }
     if (res != EC_100) {
         /*if read some data, bad request or Service not found or Server error or what else,
           else connection timeout, or client closes the connection*/
